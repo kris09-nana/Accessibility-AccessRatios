@@ -1,0 +1,85 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Jun 21 19:39:39 2020
+
+@author: lina
+"""
+# Three origin csv files are required.
+# 1. The population csv in grid form (census blocks can work, but not recommended because of MAUP). With Unique Grid ID and population (as the demand for the facility, it can change into the number of pupils while measuring the accessibility to primary schools)
+# 2. The facility csv. With Unique Facility ID and the service capacity. For emaple, the service capacity of one hospital can be the number of beds/pyhscians.
+# 3. The distance matrix between each population grid and each facility. The matrix can be generated in the QGIS using the QNEAT3- distance matrix tool. It can generate Euclidean distance matrix, network distance matrix, and travel time matrix.
+# Openstreetmap: Road Network, Facility Points
+# Population: WorldPop, Global High Resolution Population Denominators Project.2018 China population: https://dx.doi.org/10.5258/SOTON/WP00649 .
+# This example is to calculate the accessibility to primary schools
+
+import pandas as pd
+import math
+import numpy as np
+
+#use absolute path to reach your CSVs
+#demand_data: population data, GID = population grid's ID, pop = population in each grid
+demand_data = pd.read_csv('F:\python\\pop_gird10.csv', low_memory = False)
+demand_df = pd.DataFrame(demand_data)
+demand_df[['GID']]=demand_df[['GID']].astype(int)
+demand_df[['pop']]=demand_df[['pop']].astype(int)
+
+#pri_data: primary schools data,  SID = schools' ID, SC = schools' service capacility 
+pri_data =  pd.read_csv('F:\python\primary.csv', low_memory = False)
+pri_df = pd.DataFrame(pri_data)
+pri_df[['SID']]=pri_df[['SID']].astype(int)
+pri_df[['SC']]=pri_df[['SC']].astype(float)
+
+#cost_data: distance matrix, cost = distance betwee each grid and each facility (Euclidean distance, network distance, travel time, travel costs)
+cost_data = pd.read_csv('F:\python\distanceMatrix.csv', low_memory = False)
+cost_df = pd.DataFrame(cost_data)
+cost_df = cost_df[['SID','GID','cost']]
+cost_df[['GID']]=cost_df[['GID']].astype(int)
+cost_df[['SID']]=cost_df[['SID']].astype(int)
+#Here, I use the travel time as the distance costs.
+#I set up the catchment of each primary schools is 20 mins travel time. I have deleted all the cost whose travel time is greater than 20 mins.
+cost_df[['cost']]=cost_df[['cost']].astype(float)
+
+
+#The very original weight function: Piecewise function （not recommended）
+# w = Series(data=[1,0.75,0.5],index=['5min','10min','20min'])
+
+#linking the distance matrix with the population demand 
+temp1 = pd.merge(cost_df, demand_df, how='left', on = 'GID')
+temp1[['pop']]= temp1[['pop']].astype(float)
+#delete the 0 population unit
+temp1.drop(temp1.loc[temp1['pop']==0].index, inplace = True)
+#changing the travel time from seconds to minutes
+temp1['mint']=temp1['cost']/60
+#based on the travel time to calculate the distance weights
+#here I am using the Gussian function 
+# 𝐺𝑎𝑢𝑠𝑠𝑖𝑎𝑛 𝑓𝑢𝑛𝑐𝑡𝑖𝑜𝑛  𝑊=𝑒^(−(𝑑𝑖𝑗−2)^2/𝛽), W: distance weights
+# dij:distance cost between pop grid i and school j. 
+# 𝛽: the distance decay coefficient, equals 185 here (the figured is determined by the Power function  𝑊=𝑑𝑖𝑗^−1,0<dij<20min, which two have similar beginning and ending points)
+temp1['w1']= temp1.apply(lambda x: math.exp(-(np.square(x['mint']-5)/185)) if x['mint'] >5 else 1, axis=1)
+# simulate peoples' intentions to go to the primary schools decreases while the travel time increases. 
+# calculate the weighted population 
+temp1['pop2'] = temp1['w1']*temp1['pop']
+# Step 1: For each school, calculate its service population, that is sum up all the weighted pop of the unit within its 
+temp2 = temp1.groupby(['SID'])['pop2'].sum()
+temp2 = temp2.to_frame()
+temp2['SID']= temp2.index
+temp2 = temp2.reset_index(drop = True)
+temp2 = temp2.rename(columns={'pop2':'vj'})
+# Step2: For each facility, calculate its supply-demand ratios.
+#linking the distance matrix (along with population) with the schools
+temp3 = pd.merge(temp1, temp2, how='left', on = 'SID')
+# Choose one: Accessibility or Access ratios
+# For each pair distance martix, calculate the Accessibility: R = School Capacility / Population
+temp3['R']= temp3.apply(lambda x: x['SC']*1000000/x['vj'] if x['vj'] != 0 else 0, axis=1)
+# For each pair distance martix, calculate the Access ratios: R = Distance Weights * School Capacility / Population
+temp3['R']= temp3.apply(lambda x: x['w1']*x['SC']*1000000/x['vj'] if x['vj'] != 0 else 0, axis=1)
+
+# Step3: For each grid, add up all the supply-demand ratios of the facilities which fall in its catchment
+EFCA = temp3.groupby(['GID'])['R'].sum()
+EFCA = EFCA.to_frame()
+EFCA['GID']= EFCA.index
+EFCA = EFCA.reset_index(drop = True)
+#results: GRID + Accessibility/Access Ratio 
+#paste the Accessibility/Access Ratio  values in QGIS, you will get the accessibility maps.
+EFCA = EFCA.rename(columns={'R':'PrimayAccess'})
+EFCA.to_csv('./AccessResults.csv',index= None)
