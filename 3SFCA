@@ -92,8 +92,8 @@ temp3['R']= temp3.apply(lambda x: x['w1']*x['SC']*1000000/x['SUMP'] if x['SUMP']
 
 # Step3: For each grid, add up all the supply-demand ratios of the facilities which fall in its catchment
 T3FCA = temp3.groupby(['GID'])['R'].sum()
-T3FCA = EFCA.to_frame()
-T3FCA['GID']= EFCA.index
+T3FCA = T3FCA.to_frame()
+T3FCA['GID']= T3FCA.index
 T3FCA = T3FCA.reset_index(drop = True)
 #results: GRID + Accessibility/Access Ratio 
 #paste the Accessibility/Access Ratio  values in QGIS, you will get the accessibility maps.
